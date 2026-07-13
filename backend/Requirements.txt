@@ -1,0 +1,13 @@
+flask
+flask-cors
+pillow
+python-docx
+PyMuPDF
+reportlab
+gunicorn
+requests
+python-pptx
+openpyxl
+pandas
+lxml
+beautifulsoup4

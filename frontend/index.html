@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Universal File Converter</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --accent: #6c8cff;
+    --accent-soft: #2a3050;
+    --text: #e9ebf0;
+    --muted: #8d93a6;
+    --error: #ff6b6b;
+    --success: #4ade80;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .card {
+    background: var(--panel);
+    border-radius: 16px;
+    padding: 40px;
+    max-width: 520px;
+    width: 100%;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+  }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  p.sub { color: var(--muted); margin: 0 0 28px; font-size: 14px; }
+  .dropzone {
+    border: 2px dashed #333a4d;
+    border-radius: 12px;
+    padding: 32px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  .dropzone.dragover { border-color: var(--accent); background: var(--accent-soft); }
+  .dropzone p { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
+  .filename { color: var(--accent); font-weight: 600; word-break: break-all; }
+  input[type=file] { display: none; }
+  .row { display: flex; gap: 12px; margin-top: 20px; align-items: center; }
+  select {
+    flex: 1;
+    background: #11141a;
+    border: 1px solid #2a2f3d;
+    color: var(--text);
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 14px;
+  }
+  button {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 12px 20px;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 14px;
+    width: 100%;
+    margin-top: 18px;
+    transition: opacity .15s;
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .status { margin-top: 16px; font-size: 13px; min-height: 20px; }
+  .status.error { color: var(--error); }
+  .status.success { color: var(--success); }
+  .download-link {
+    display: inline-block;
+    margin-top: 10px;
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 600;
+  }
+  .supported {
+    margin-top: 24px;
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Universal File Converter</h1>
+    <p class="sub">Drop a file, pick a target format, convert. Prototype backend running locally.</p>
+
+    <div class="dropzone" id="dropzone">
+      <div id="dzText">📄 Click or drag a file here</div>
+      <p id="dzFilename"></p>
+    </div>
+    <input type="file" id="fileInput">
+
+    <div class="row">
+      <select id="targetFormat" disabled>
+        <option value="">Select a file first…</option>
+      </select>
+    </div>
+
+    <button id="convertBtn" disabled>Convert</button>
+    <div class="status" id="status"></div>
+    <div class="supported" id="supportedList"></div>
+  </div>
+
+<script>
+const API_BASE = "";
+
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+const dzFilename = document.getElementById('dzFilename');
+const targetFormat = document.getElementById('targetFormat');
+const convertBtn = document.getElementById('convertBtn');
+const statusEl = document.getElementById('status');
+const supportedListEl = document.getElementById('supportedList');
+
+let selectedFile = null;
+let routes = [];
+let aiEnabled = false;
+
+async function loadFormats() {
+  try {
+    const res = await fetch(`${API_BASE}/api/formats`);
+    const data = await res.json();
+    routes = data.routes;
+    aiEnabled = data.ai_fallback_enabled;
+    supportedListEl.textContent = "Built-in: " + routes.join(", ") +
+      (aiEnabled ? "  |  AI fallback: ON (any other format pair will be attempted via Claude)"
+                 : "  |  AI fallback: OFF (set ANTHROPIC_API_KEY on the server to enable)");
+  } catch (e) {
+    supportedListEl.textContent = "Could not reach backend at " + API_BASE + ". Is app.py running?";
+  }
+}
+loadFormats();
+
+dropzone.addEventListener('click', () => fileInput.click());
+dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+dropzone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropzone.classList.remove('dragover');
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', (e) => {
+  if (e.target.files.length) handleFile(e.target.files[0]);
+});
+
+function handleFile(file) {
+  selectedFile = file;
+  dzFilename.innerHTML = `<span class="filename">${file.name}</span>`;
+  const ext = file.name.split('.').pop().toLowerCase();
+  const builtinTargets = routes
+    .filter(r => r.startsWith(ext + "->"))
+    .map(r => r.split("->")[1]);
+
+  targetFormat.innerHTML = "";
+  builtinTargets.forEach(t => {
+    const opt = document.createElement('option');
+    opt.value = t;
+    opt.textContent = "Convert to ." + t + " (built-in)";
+    targetFormat.appendChild(opt);
+  });
+
+  if (aiEnabled) {
+    const opt = document.createElement('option');
+    opt.value = "__custom__";
+    opt.textContent = "Other format… (AI-generated)";
+    targetFormat.appendChild(opt);
+  }
+
+  if (targetFormat.options.length === 0) {
+    targetFormat.innerHTML = `<option value="">No supported conversions for .${ext}</option>`;
+    targetFormat.disabled = true;
+    convertBtn.disabled = true;
+  } else {
+    targetFormat.disabled = false;
+    convertBtn.disabled = false;
+  }
+  statusEl.textContent = "";
+  statusEl.className = "status";
+}
+
+convertBtn.addEventListener('click', async () => {
+  if (!selectedFile || !targetFormat.value) return;
+
+  let target = targetFormat.value;
+  if (target === "__custom__") {
+    target = prompt("Enter the target file extension (e.g. pptx, csv, html):");
+    if (!target) return;
+    target = target.trim().toLowerCase().replace(/^\./, "");
+  }
+
+  convertBtn.disabled = true;
+  statusEl.className = "status";
+  statusEl.textContent = target.length && aiEnabled && !routes.some(r => r.endsWith("->" + target))
+    ? "Asking Claude to write a conversion script… this can take 10-30s"
+    : "Converting…";
+
+  const formData = new FormData();
+  formData.append('file', selectedFile);
+  formData.append('target_format', target);
+
+  try {
+    const res = await fetch(`${API_BASE}/api/convert`, { method: 'POST', body: formData });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Conversion failed");
+
+    const via = data.method === "ai_fallback" ? " (via AI-generated script)" : "";
+    statusEl.className = "status success";
+    statusEl.innerHTML = `✅ Done${via}. <a class="download-link" href="${API_BASE}${data.download_url}">Download result</a>`;
+  } catch (e) {
+    statusEl.className = "status error";
+    statusEl.textContent = "❌ " + e.message;
+  } finally {
+    convertBtn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
