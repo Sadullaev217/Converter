@@ -343,14 +343,55 @@ function buildCalloutNode(match, lines) {
   return { type: "callout", kind, label, text };
 }
 
-// A run is a table if every line splits into the same number (>=2) of
-// cells when broken on runs of 2+ spaces - i.e. consistent column gaps.
+// Detects a table from the monospace-aligned `-layout` text by finding the
+// columns' start positions, then assigning each line's text to columns by
+// character position. Crucially this handles multi-line cells: a line whose
+// left column is empty (the right cell wrapped) is folded into the row above,
+// and a short lowercase spillover in the left column (a wrapped left cell) is
+// too. Returns an array of row arrays, or null when it isn't tabular.
 function detectTable(lines) {
-  if (lines.length < 2) return null;
-  const rows = lines.map((l) => l.raw.trim().split(/\s{2,}/).map((c) => c.trim()));
-  const colCount = rows[0].length;
-  if (colCount < 2) return null;
-  if (!rows.every((r) => r.length === colCount)) return null;
+  const raws = lines.map((l) => l.raw.replace(/\s+$/, "")).filter((r) => r.trim());
+  if (raws.length < 2) return null;
+
+  const leftMargin = Math.min(...raws.map((r) => r.length - r.trimStart().length));
+
+  // Column boundaries = start positions that recur across lines: the left
+  // margin, plus any field that begins after a run of 2+ spaces.
+  const freq = new Map();
+  for (const r of raws) {
+    const starts = new Set();
+    if (r.length - r.trimStart().length <= leftMargin + 1) starts.add(leftMargin);
+    const re = /\s{2,}\S/g;
+    let m;
+    while ((m = re.exec(r))) starts.add(m.index + m[0].length - 1);
+    starts.forEach((c) => freq.set(c, (freq.get(c) || 0) + 1));
+  }
+  let bounds = [...freq.entries()].filter(([, n]) => n >= 2).map(([c]) => c).sort((a, b) => a - b);
+  bounds = bounds.filter((c, i) => i === 0 || c - bounds[i - 1] > 3); // merge near-duplicates
+  if (bounds.length < 2) return null;
+
+  const cut = (r) => bounds.map((b, i) => (r.slice(b, i + 1 < bounds.length ? bounds[i + 1] : r.length) || "").trim());
+
+  const rows = [];
+  for (const r of raws) {
+    const cells = cut(r);
+    const left = cells[0];
+    // Continuation of the row above when the left cell is empty, or a short
+    // lowercase fragment (a wrapped left cell like "something").
+    const isContinuation =
+      rows.length > 0 && (left === "" || (/^[a-z]/.test(left) && left.length <= 18 && left.split(/\s+/).length <= 2));
+    if (isContinuation) {
+      const last = rows[rows.length - 1];
+      cells.forEach((c, i) => {
+        if (c) last[i] = last[i] ? `${last[i]} ${c}` : c;
+      });
+    } else {
+      rows.push(cells);
+    }
+  }
+
+  const solidRows = rows.filter((r) => r.filter(Boolean).length >= 2).length;
+  if (rows.length < 2 || solidRows < 2) return null;
   return rows;
 }
 

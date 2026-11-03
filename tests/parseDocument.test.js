@@ -50,9 +50,22 @@ test("table: a single column (prose) is not a table", () => {
   assert.equal(detectTable(lines), null);
 });
 
-test("table: ragged column counts are not a table", () => {
-  const lines = [{ raw: "a    b    c" }, { raw: "d    e" }];
-  assert.equal(detectTable(lines), null);
+test("table: multi-line cells are folded into their row", () => {
+  // Right column wraps to extra lines (empty left column), and the left
+  // column itself wraps once ("something") - both must fold into the row.
+  const lines = [
+    { raw: " Pillar                     What it means" },
+    { raw: " The landscape is the map    There is no minimap or quest marker. The lit" },
+    { raw: "                             lighthouse shows above the tree line." },
+    { raw: " Every action restores       Each interaction changes the world: a battery" },
+    { raw: " something                   disappears, the beacon is lit." },
+  ];
+  const rows = detectTable(lines);
+  assert.equal(rows.length, 3, "header + 2 data rows");
+  assert.equal(rows[1][0], "The landscape is the map");
+  assert.match(rows[1][1], /minimap.*tree line\./);
+  assert.equal(rows[2][0], "Every action restores something", "wrapped left cell merged");
+  assert.match(rows[2][1], /Each interaction.*beacon is lit\./);
 });
 
 // ---------------------------------------------------------------------------
