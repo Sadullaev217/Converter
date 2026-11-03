@@ -4,18 +4,19 @@
 # System tools needed at runtime:
 #   - Node.js            -> runs scripts/pdf-to-docx.js (the PDF -> DOCX rebuild)
 #   - Poppler            -> pdfimages / pdftotext / pdftohtml used by that tool
-#   - LibreOffice Writer -> high-fidelity docx -> pdf (soffice --convert-to)
-#     Writer only (not full LibreOffice) to keep the image lean; metric-
-#     compatible fonts (Liberation) make common Office docs render correctly.
+#   - LibreOffice       -> high-fidelity docx -> pdf AND layout-accurate
+#     pdf -> docx (soffice --convert-to, with writer_pdf_import). Writer +
+#     Draw (Draw provides PDF import) instead of full LibreOffice to stay
+#     leaner; Liberation/DejaVu fonts make common Office docs render right.
 FROM python:3.12-slim-bookworm
 
-# Node 20 (NodeSource) + Poppler + LibreOffice Writer, then clean apt caches.
+# Node 20 (NodeSource) + Poppler + LibreOffice (Writer+Draw), then clean caches.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates gnupg poppler-utils \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends \
          nodejs \
-         libreoffice-writer libreoffice-core \
+         libreoffice-writer libreoffice-draw libreoffice-core \
          fonts-liberation fonts-liberation2 fonts-dejavu-core \
     && apt-get purge -y curl gnupg \
     && apt-get autoremove -y \

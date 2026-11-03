@@ -92,19 +92,20 @@ def find_soffice():
 SOFFICE = find_soffice()
 
 
-def soffice_convert(src_path: Path, out_path: Path, target_ext: str) -> None:
+def soffice_convert(src_path: Path, out_path: Path, target_ext: str, infilter: str = None) -> None:
     """Convert `src_path` to `target_ext` with headless LibreOffice, preserving
-    layout/fonts/images. Each call uses its own LibreOffice profile so
-    concurrent requests don't lock each other."""
+    layout/fonts/images. `infilter` forces an import filter (e.g.
+    "writer_pdf_import" to open a PDF as a text document for PDF->DOCX). Each
+    call uses its own LibreOffice profile so concurrent requests don't lock."""
     if not SOFFICE:
         raise RuntimeError("LibreOffice (soffice) is not installed")
     with tempfile.TemporaryDirectory() as tmp:
         profile = (Path(tmp) / "profile").as_uri()
-        result = subprocess.run(
-            [SOFFICE, f"-env:UserInstallation={profile}", "--headless",
-             "--convert-to", target_ext, "--outdir", tmp, str(src_path)],
-            capture_output=True, text=True, timeout=120,
-        )
+        args = [SOFFICE, f"-env:UserInstallation={profile}", "--headless"]
+        if infilter:
+            args.append(f"--infilter={infilter}")
+        args += ["--convert-to", target_ext, "--outdir", tmp, str(src_path)]
+        result = subprocess.run(args, capture_output=True, text=True, timeout=120)
         produced = Path(tmp) / f"{src_path.stem}.{target_ext}"
         if result.returncode != 0 or not produced.exists():
             detail = (result.stderr or result.stdout or "unknown error").strip()
@@ -283,11 +284,27 @@ def _pdf_to_images_zip(src_path: Path, job_id: str) -> Path:
 
 
 def _pdf_to_docx(src_path: Path, job_id: str) -> Path:
-    """Shells out to the Node CLI (scripts/pdf-to-docx.js), which rebuilds
-    the PDF as a real .docx via docx-js rather than doing a lossy raw
-    conversion. Requires node plus the Poppler/LibreOffice tools that
-    script depends on to be on PATH for this process."""
+    """Layout-accurate PDF -> DOCX. LibreOffice's PDF import reproduces the
+    original's visual structure (positions, spacing, columns). Falls back to
+    the Node structural-rebuild tool (cleaner/editable, but reflowed) when
+    LibreOffice isn't installed."""
     out_path = OUTPUT_DIR / f"{job_id}.docx"
+    if SOFFICE:
+        try:
+            soffice_convert(src_path, out_path, "docx", infilter="writer_pdf_import")
+            if out_path.exists() and out_path.stat().st_size > 0:
+                return out_path
+        except Exception as e:
+            app.logger.warning("LibreOffice PDF import failed, falling back to rebuild: %s", e)
+    # No LibreOffice, or its PDF import is unavailable/failed -> editable rebuild.
+    _pdf_to_docx_rebuild(src_path, out_path)
+    return out_path
+
+
+def _pdf_to_docx_rebuild(src_path: Path, out_path: Path) -> None:
+    """Fallback: shell out to the Node CLI (scripts/pdf-to-docx.js), which
+    rebuilds the PDF as a clean, editable .docx via docx-js. Needs node +
+    Poppler on PATH."""
     result = subprocess.run(
         # --no-verify: the LibreOffice render-back is a human review aid, pointless per web request.
         ["node", str(PDF_TO_DOCX_SCRIPT), str(src_path), str(out_path), "--no-verify"],
@@ -296,7 +313,6 @@ def _pdf_to_docx(src_path: Path, job_id: str) -> Path:
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "unknown error").strip()
         raise RuntimeError(f"pdf-to-docx.js failed: {detail}")
-    return out_path
 
 
 def _docx_to_text(src_path: Path, job_id: str) -> Path:

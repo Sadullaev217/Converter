@@ -164,17 +164,26 @@ python tests/fixtures/make_sample_pdf.py
 `backend/app.py` (Flask) + `frontend/index.html` (static, no build step) is
 a small "convert any format to any other format" shell around the routing
 table below. Images go through Pillow, PDF text/image extraction through
-PyMuPDF, `docx → pdf` through **LibreOffice headless** (`soffice
---convert-to`, which preserves layout/fonts/images/tables — it falls back to
-a plain text reflow only if LibreOffice isn't installed), and `pdf → docx`
-by shelling out to the structural-rebuild tool above.
+PyMuPDF, and both office/PDF directions go through **LibreOffice headless**
+(`soffice --convert-to`), which preserves layout, fonts, images and tables:
+
+- **`docx → pdf`** — LibreOffice renders the document; falls back to a plain
+  text reflow only if LibreOffice isn't installed.
+- **`pdf → docx`** — LibreOffice's PDF import (`writer_pdf_import`) reproduces
+  the original's **visual layout** (positions, spacing, columns). If
+  LibreOffice or its PDF import is unavailable, it falls back to the editable
+  structural-rebuild tool above — so the route always returns a `.docx`.
+
+That's two deliberately different takes on PDF → Word: the web app favors
+**layout fidelity** (LibreOffice), while the standalone CLI tool
+(`scripts/pdf-to-docx.js`) favors **clean, editable structure** (the rebuild).
 
 | From | To |
 |---|---|
 | png, jpg, jpeg, webp, bmp, gif, tiff | any of the others |
 | pdf | txt (extracted text) |
 | pdf | png (one image per page, zipped) |
-| **pdf** | **docx (structural rebuild — see above)** |
+| **pdf** | **docx (layout-accurate via LibreOffice; falls back to the editable rebuild above)** |
 | docx | txt |
 | docx | pdf (high-fidelity via LibreOffice — layout, fonts, images, tables preserved) |
 | txt | pdf |
