@@ -4,10 +4,10 @@
   "private": true,
   "description": "Universal File Converter prototype",
   "scripts": {
-    "pdf-to-docx": "node scripts/pdf-to-docx.js"
+    "pdf-to-docx": "node scripts/pdf-to-docx.js",
+    "test": "node --test \"tests/**/*.test.js\""
   },
   "dependencies": {
-    "docx": "^9.5.1",
-    "pdf-parse": "^1.1.1"
+    "docx": "^9.5.1"
   }
 }

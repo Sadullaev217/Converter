@@ -2,3 +2,6 @@ node_modules/
 __pycache__/
 *.pyc
 test-output.docx
+
+# Generator intermediate for the test fixture (sample.pdf itself is tracked).
+tests/fixtures/sample_image.png

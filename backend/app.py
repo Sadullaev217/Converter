@@ -23,6 +23,7 @@ avoids that dependency so it runs anywhere without a heavy install.
 
 import os
 import io
+import re
 import uuid
 import zipfile
 import subprocess
@@ -40,6 +41,7 @@ from reportlab.lib.units import inch
 from ai_fallback import ai_convert
 
 app = Flask(__name__, static_folder="../frontend", static_url_path="")
+app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_UPLOAD_MB", 25)) * 1024 * 1024
 CORS(app)
 
 UPLOAD_DIR = Path(tempfile.gettempdir()) / "converter_uploads"
@@ -70,6 +72,16 @@ def ext_of(filename: str) -> str:
     return filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
 
 
+# Extensions end up in filesystem paths, so only short alphanumeric ones are accepted.
+SAFE_EXT_RE = re.compile(r"^[a-z0-9]{1,8}$")
+
+
+@app.errorhandler(413)
+def too_large(_e):
+    limit_mb = app.config["MAX_CONTENT_LENGTH"] // (1024 * 1024)
+    return jsonify({"error": f"File too large (limit is {limit_mb} MB)"}), 413
+
+
 @app.route("/", methods=["GET"])
 def home():
     return app.send_static_file("index.html")
@@ -93,7 +105,9 @@ def convert():
     if not target_format:
         return jsonify({"error": "No target_format specified"}), 400
 
-    source_ext = ext_of(file.filename)
+    source_ext = ext_of(file.filename or "")
+    if not SAFE_EXT_RE.match(source_ext) or not SAFE_EXT_RE.match(target_format):
+        return jsonify({"error": "Invalid file extension or target_format"}), 400
     route_key = (source_ext, target_format)
 
     job_id = str(uuid.uuid4())[:8]
@@ -198,7 +212,8 @@ def _pdf_to_docx(src_path: Path, job_id: str) -> Path:
     script depends on to be on PATH for this process."""
     out_path = OUTPUT_DIR / f"{job_id}.docx"
     result = subprocess.run(
-        ["node", str(PDF_TO_DOCX_SCRIPT), str(src_path), str(out_path)],
+        # --no-verify: the LibreOffice render-back is a human review aid, pointless per web request.
+        ["node", str(PDF_TO_DOCX_SCRIPT), str(src_path), str(out_path), "--no-verify"],
         capture_output=True, text=True, timeout=180,
     )
     if result.returncode != 0:
@@ -258,4 +273,7 @@ def _txt_to_pdf(src_path: Path, job_id: str) -> Path:
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5050))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    # Localhost-only by default: the optional AI fallback executes generated code.
+    # Set HOST=0.0.0.0 deliberately if you really want it reachable on the network.
+    host = os.environ.get("HOST", "127.0.0.1")
+    app.run(host=host, port=port, debug=False)

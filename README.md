@@ -14,18 +14,25 @@ target format, download the result) so it's usable from a browser, not just
 the CLI. That app also happens to do a handful of other prototype-grade
 conversions (images, basic docx↔pdf/txt) — more on those [below](#the-rest-of-the-converter-web-app).
 
+See **[`examples/`](examples/)** for a worked conversion: an input PDF, the
+rebuilt `.docx`, and page-by-page renders of the result.
+
 ## How the rebuild pipeline works
 
 ```
 input.pdf
    │
-   ├─ pdfimages -png          → extract every embedded image + its source page
-   ├─ pdftotext -layout        → per-page, layout-preserved text
+   ├─ pdfimages -png            → extract every embedded image + its source page
+   ├─ pdftotext -layout          → per-page, layout-preserved text
+   ├─ pdftohtml -xml             → per-line font size / bold / family
+   ├─ pdftotext -bbox-layout     → per-line bounding boxes (points)
    │
    ▼
-heuristic parser (scripts/pdf-to-docx/parseDocument.js)
+parser (scripts/pdf-to-docx/parseDocument.js)
+   → strips repeated headers/footers and page numbers
    → flat document model: headings, paragraphs, bullet/numbered lists,
-     tables, code blocks, callout boxes, images — interleaved in reading order
+     tables, code blocks, callout boxes, images — in reading order, with
+     images placed between the paragraphs they sat between in the PDF
    │
    ▼
 docx-js assembly (scripts/pdf-to-docx/buildDocx.js)
@@ -38,19 +45,30 @@ docx-js assembly (scripts/pdf-to-docx/buildDocx.js)
 output.docx
    │
    ▼
-verification (soffice --headless --convert-to pdf → pdftoppm -png)
+verification (soffice --headless --convert-to pdf → pdftoppm -png)   [skippable]
    → renders the generated .docx back to page images so you can eyeball
      that headings/tables/images actually landed correctly
 ```
 
-Since `pdftotext -layout` gives monospace-aligned text with no font-size or
-boldness metadata, structure detection is heuristic: ALL-CAPS or short
-title-cased lines become headings, `- `/`* `/`1. ` prefixes become lists,
-lines with consistent 2+-space column gaps become tables, `WARNING:` /
-`NOTE:` / `IMPORTANT:` / `TIP:` become colored callout boxes, and indented or
-fenced blocks become monospace code. It's tuned for the common case — a
-text-plus-screenshots technical document — not exotic multi-column or
-rotated layouts.
+Structure detection prefers **font data** when it's available: `pdftohtml
+-xml` gives each line's font size, weight and family, so headings are
+detected by being larger or bolder than the document's body text (measured
+across the whole document), and code by using a monospace font — far more
+reliable than guessing from capitalisation. When font data can't be read it
+falls back to text-shape heuristics: ALL-CAPS or short title-cased lines
+become headings, `- `/`* `/`1. ` prefixes become lists, consistent 2+-space
+column gaps become tables, `WARNING:` / `NOTE:` / `IMPORTANT:` / `TIP:` /
+`SCREENSHOT REQUIRED:` become colored callout boxes, and indented or fenced
+blocks become monospace code.
+
+Running headers, footers and `Page N of M` lines that repeat across pages
+are detected and dropped so they don't leak into the body, and a logo
+repeated in the header/footer of every page is dropped the same way. A PDF
+with no extractable text layer (a scan) is detected and the tool prints a
+warning — it still embeds the page images, but there's no built-in OCR.
+
+It's tuned for the common case — a text-plus-screenshots technical document
+— not exotic multi-column or rotated layouts.
 
 **A real bug this surfaced during testing:** giving every numbered list in
 the document the same docx numbering reference makes Word/LibreOffice count
@@ -64,27 +82,36 @@ visually distinct lists.
 ## Usage
 
 ```bash
-npm install   # installs docx (+ pdf-parse) from package.json
-node scripts/pdf-to-docx.js <input.pdf> <output.docx> [--tmpdir <dir>]
+npm install   # installs docx from package.json
+node scripts/pdf-to-docx.js <input.pdf> <output.docx> [--tmpdir <dir>] [--no-verify]
 ```
 
 - `--tmpdir <dir>` — where intermediate extraction files go (defaults to the
   OS temp dir). A fresh subdirectory is created under it per run.
-- Prints the paths of the rendered verification images so you can visually
-  confirm the output before trusting it. Raw extraction intermediates are
-  deleted on success; the verification images are intentionally left on disk
-  for review. On failure, all temp files are left in place and the path is
-  printed for debugging.
-- Exits non-zero with a clear message if `pdfimages`, `pdftotext`,
-  `pdftoppm`, or `soffice` aren't on PATH.
+- `--no-verify` — skip the LibreOffice/pdftoppm render-back step. The `.docx`
+  is still written; it's just not rendered to check images. Faster, and it
+  means **LibreOffice isn't required** — handy for batch/server use (the web
+  app passes this).
+- With verification on, the tool prints the paths of the rendered check
+  images so you can eyeball the output. Raw extraction intermediates are
+  deleted on success; the check images are left on disk for review. On
+  failure, all temp files are left in place and the path is printed.
+- Exits non-zero with a clear message if a required tool isn't on PATH
+  (`pdfimages`/`pdftotext` always; `pdftoppm`/`soffice` only without
+  `--no-verify`).
 
 ### Dependencies
 
 - **Node.js** + the [`docx`](https://www.npmjs.com/package/docx) package
   (docx-js) for generating the `.docx`.
-- **Poppler** (`pdfimages`, `pdftotext`, `pdftoppm`) for image/text
-  extraction and rendering verification pages.
-- **LibreOffice** (`soffice`) for the verification render-back step only.
+- **Poppler** (`pdfimages`, `pdftotext`, `pdftohtml`) for image/text/font
+  extraction. On Windows, install the full Poppler build (the one bundled
+  with Git for Windows is Xpdf and lacks `-bbox-layout`); the tool prefers a
+  complete Poppler install on PATH automatically.
+- **LibreOffice** (`soffice`) and Poppler's `pdftoppm` for the verification
+  render-back step only — not needed with `--no-verify`. On Windows the
+  tool also looks for `soffice.exe` in its default install location when
+  it's not on PATH.
 
 ```bash
 # Windows (winget) — no admin rights needed
@@ -110,6 +137,27 @@ No all-in-one "pdf to docx" converter binary/library under the hood — the
 point is a controlled, inspectable rebuild you can read and tune. It's not
 trying to perfectly replicate exotic PDF layouts (multi-column, rotated
 text); it optimizes for the common technical-document case.
+
+### Tests
+
+```bash
+npm test
+```
+
+Runs the [`node:test`](https://nodejs.org/api/test.html) suite in `tests/`:
+unit tests for the parser's pure functions (callout/table/heading detection,
+header-footer removal, numbering independence, the XML parsers) plus one
+golden end-to-end test that runs the real CLI on `tests/fixtures/sample.pdf`
+and asserts the produced `.docx` is a valid OOXML package with the expected
+headings, lists, table, code, callout and embedded image. The unit tests
+need nothing extra; the e2e test needs Poppler on PATH and skips itself if
+it's missing. CI runs the whole suite on every push (`.github/workflows/ci.yml`).
+
+To regenerate the fixture PDF (needs `reportlab` + `pillow`):
+
+```bash
+python tests/fixtures/make_sample_pdf.py
+```
 
 ## The rest of the converter (web app)
 
@@ -139,19 +187,31 @@ by default).
 
 ```bash
 cd backend
-pip install flask flask-cors pillow python-docx PyMuPDF reportlab
+pip install -r requirements.txt
 python3 app.py
 ```
 
-This starts the API on `http://localhost:5050`. Then open
+This starts the API on `http://127.0.0.1:5050`. Then open
 `frontend/index.html` directly in your browser — it's a static page that
 calls the API, no server needed for it.
 
+The server binds to localhost only by default (the optional AI fallback
+executes generated code, so it shouldn't be network-reachable without
+thought) and caps uploads at 25 MB. Both are configurable by environment
+variable:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `HOST` | `127.0.0.1` | Set to `0.0.0.0` to expose it on the network (do this deliberately). |
+| `PORT` | `5050` | API port. |
+| `MAX_UPLOAD_MB` | `25` | Upload size limit; oversized uploads get a clean 413. |
+
 **Important:** since the `pdf → docx` route shells out to
-`scripts/pdf-to-docx.js`, start `python3 app.py` from a terminal where
-`node`, `pdfimages`, `pdftotext`, `pdftoppm`, and `soffice` are all
+`scripts/pdf-to-docx.js` with `--no-verify`, start `python3 app.py` from a
+terminal where `node`, `pdfimages`, `pdftotext`, and `pdftohtml` are all
 resolvable on PATH, or that one route will fail while everything else still
-works.
+works. (LibreOffice isn't needed for the web route — only for the CLI's
+verification step.)
 
 ### How it's architected
 
@@ -190,6 +250,9 @@ independently.
 ## Files
 
 - `scripts/pdf-to-docx.js` — CLI entry point for the PDF → DOCX rebuild tool
-- `scripts/pdf-to-docx/` — its extraction/parsing/assembly/verification modules
+- `scripts/pdf-to-docx/` — its modules: `checkDeps` (tool resolution),
+  `extractImages`, `extractText`, `layoutInfo` (font/geometry), `parseDocument`
+  (the document model), `buildDocx` (docx-js assembly), `verify`, `cli`
+- `tests/` — `node:test` unit + golden e2e tests, with `fixtures/`
 - `backend/app.py` — Flask API + all conversion engines
 - `frontend/index.html` — drag-and-drop UI, talks to the API

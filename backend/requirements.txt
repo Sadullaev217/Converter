@@ -1,0 +1,13 @@
+# Web app (backend/app.py)
+flask
+flask-cors
+pillow
+python-docx
+PyMuPDF
+reportlab
+
+# Optional AI fallback engine (backend/ai_fallback.py)
+requests
+
+# Production WSGI server (see README "Taking this to production")
+gunicorn

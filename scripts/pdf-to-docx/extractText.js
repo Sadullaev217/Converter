@@ -3,6 +3,7 @@
 const fs = require("fs");
 const path = require("path");
 const { spawnSync } = require("child_process");
+const { toolPath } = require("./checkDeps");
 
 /**
  * Runs `pdftotext -layout` and splits the result into per-page text,
@@ -11,7 +12,7 @@ const { spawnSync } = require("child_process");
  */
 function extractPageTexts(pdfPath, tmpDir) {
   const textPath = path.join(tmpDir, "text.txt");
-  const result = spawnSync("pdftotext", ["-layout", pdfPath, textPath], { encoding: "utf8" });
+  const result = spawnSync(toolPath("pdftotext"), ["-layout", pdfPath, textPath], { encoding: "utf8" });
   if (result.status !== 0) {
     throw new Error(`pdftotext failed: ${result.stderr || result.error}`);
   }

@@ -2,7 +2,9 @@
 
 const fs = require("fs");
 const path = require("path");
+const { pathToFileURL } = require("url");
 const { spawnSync } = require("child_process");
+const { toolPath } = require("./checkDeps");
 
 /**
  * Renders the generated .docx back to page images so a human (or a
@@ -12,14 +14,28 @@ const { spawnSync } = require("child_process");
  *   soffice --headless --convert-to pdf <docx> --outdir <tmpDir>
  *   pdftoppm -png <tmpDir>/<name>.pdf <tmpDir>/check
  *
+ * Each run gets its own LibreOffice user profile: two headless soffice
+ * processes sharing the default profile lock each other out, which
+ * matters when several conversions run at once (e.g. behind the web app).
+ *
  * Returns the list of rendered check-image paths.
  */
 function verifyDocx(docxPath, tmpDir) {
+  const profileDir = path.join(tmpDir, "lo-profile");
   const convert = spawnSync(
-    "soffice",
-    ["--headless", "--convert-to", "pdf", docxPath, "--outdir", tmpDir],
+    toolPath("soffice"),
+    [
+      `-env:UserInstallation=${pathToFileURL(profileDir).href}`,
+      "--headless",
+      "--convert-to",
+      "pdf",
+      docxPath,
+      "--outdir",
+      tmpDir,
+    ],
     { encoding: "utf8", timeout: 120000 },
   );
+  fs.rmSync(profileDir, { recursive: true, force: true });
   if (convert.status !== 0) {
     throw new Error(`soffice conversion failed: ${convert.stderr || convert.stdout || convert.error}`);
   }
@@ -31,7 +47,7 @@ function verifyDocx(docxPath, tmpDir) {
   }
 
   const checkPrefix = path.join(tmpDir, "check");
-  const render = spawnSync("pdftoppm", ["-png", renderedPdf, checkPrefix], { encoding: "utf8" });
+  const render = spawnSync(toolPath("pdftoppm"), ["-png", renderedPdf, checkPrefix], { encoding: "utf8" });
   if (render.status !== 0) {
     throw new Error(`pdftoppm failed: ${render.stderr || render.error}`);
   }

@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Node tests (pdf-to-docx)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Poppler (pdfimages/pdftotext/pdftohtml)
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set up Python (for the test fixture)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Generate the test fixture PDF
+        run: |
+          python -m pip install --quiet reportlab pillow
+          python tests/fixtures/make_sample_pdf.py
+
+      - name: Run tests
+        run: npm test
