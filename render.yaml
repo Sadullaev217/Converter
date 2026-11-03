@@ -1,0 +1,26 @@
+# Render blueprint — deploys the converter as a single Docker web service.
+# Use it by connecting this repo at https://dashboard.render.com (New +
+# -> Blueprint), or just "New + -> Web Service -> Docker" and point it here.
+services:
+  - type: web
+    name: universal-file-converter
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/formats
+    autoDeploy: true
+    envVars:
+      # Bind publicly inside the container (gunicorn already binds 0.0.0.0,
+      # this is belt-and-suspenders for the dev-server code path).
+      - key: HOST
+        value: 0.0.0.0
+      # Upload cap (MB) and how long converted files linger before cleanup.
+      - key: MAX_UPLOAD_MB
+        value: "25"
+      - key: OUTPUT_TTL_SECONDS
+        value: "3600"
+      # Per-IP limits ("<n> per <period>" items separated by ";"); set empty to disable.
+      - key: RATE_LIMITS
+        value: "60 per hour;10 per minute"
+      # NOTE: GEMINI_API_KEY is intentionally unset, so the AI fallback
+      # (which executes generated code) stays disabled on the public instance.

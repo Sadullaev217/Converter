@@ -24,6 +24,7 @@ avoids that dependency so it runs anywhere without a heavy install.
 import os
 import io
 import re
+import time
 import uuid
 import zipfile
 import subprocess
@@ -44,12 +45,47 @@ app = Flask(__name__, static_folder="../frontend", static_url_path="")
 app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_UPLOAD_MB", 25)) * 1024 * 1024
 CORS(app)
 
+# Per-IP rate limiting: this endpoint does real conversion work, so a public
+# deployment needs a basic abuse guard. Degrades gracefully if the package
+# isn't installed (local dev) or limits are disabled via env.
+RATE_LIMITS = os.environ.get("RATE_LIMITS", "60 per hour;10 per minute")
+try:
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+
+    limiter = Limiter(
+        get_remote_address,
+        app=app,
+        default_limits=[l.strip() for l in RATE_LIMITS.split(";") if l.strip()] if RATE_LIMITS else [],
+        storage_uri="memory://",
+    )
+except ImportError:
+    limiter = None
+
 UPLOAD_DIR = Path(tempfile.gettempdir()) / "converter_uploads"
 OUTPUT_DIR = Path(tempfile.gettempdir()) / "converter_outputs"
 UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
+# On ephemeral hosts (Render etc.) converted files pile up in a temp dir;
+# drop anything older than this so the disk doesn't slowly fill.
+OUTPUT_TTL_SECONDS = int(os.environ.get("OUTPUT_TTL_SECONDS", 3600))
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def cleanup_dir(directory: Path, ttl: int = OUTPUT_TTL_SECONDS) -> None:
+    """Best-effort deletion of files in `directory` older than `ttl` seconds."""
+    cutoff = time.time() - ttl
+    try:
+        for entry in directory.iterdir():
+            try:
+                if entry.is_file() and entry.stat().st_mtime < cutoff:
+                    entry.unlink()
+            except OSError:
+                pass
+    except OSError:
+        pass
 PDF_TO_DOCX_SCRIPT = REPO_ROOT / "scripts" / "pdf-to-docx.js"
 
 IMAGE_FORMATS = {"png", "jpg", "jpeg", "webp", "bmp", "gif", "tiff"}
@@ -97,6 +133,9 @@ def formats():
 
 @app.route("/api/convert", methods=["POST"])
 def convert():
+    cleanup_dir(OUTPUT_DIR)
+    cleanup_dir(UPLOAD_DIR)
+
     if "file" not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
 

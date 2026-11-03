@@ -9,5 +9,8 @@ reportlab
 # Optional AI fallback engine (backend/ai_fallback.py)
 requests
 
+# Per-IP rate limiting for the public endpoint
+flask-limiter
+
 # Production WSGI server (see README "Taking this to production")
 gunicorn

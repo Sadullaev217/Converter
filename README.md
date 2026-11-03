@@ -228,24 +228,51 @@ reportlab, and `pdf → docx` by shelling out to the Node tool. Each format
 family is its own pipeline that can be swapped, scaled, or outsourced
 independently.
 
-### Taking this to production
+### Deploying it online
 
-1. **Full-fidelity Office conversion** (pptx, xlsx, pixel-perfect docx↔pdf):
-   shell out to `soffice --headless --convert-to pdf` the way `pdf → docx`
-   already does — this is what most converter SaaS products use under the
-   hood.
-2. **Async jobs**: conversion currently happens synchronously inside the
-   request. For large files or slow conversions (the PDF→DOCX verify step
-   launches LibreOffice), move this to a queue (Celery + Redis, or BullMQ)
-   so uploads don't time out.
-3. **Storage**: swap `/tmp` for S3 or equivalent object storage with
-   auto-expiring uploaded/converted files.
-4. **Video/audio**: add an `ffmpeg`-based engine following the same routing
-   pattern as the image engine.
-5. **Auth & rate limiting** if this becomes a public product.
-6. **Deploy**: containerize the Flask app (Docker) with Node + Poppler +
-   LibreOffice baked into the image, behind gunicorn, with the frontend on
-   a CDN or static host.
+The whole app runs as **one Docker container** — Flask serves both the API
+and the static frontend (same origin), and shells out to the Node tool. The
+image bundles Python + Node + Poppler; **LibreOffice is not needed** (the web
+`pdf → docx` route runs `--no-verify`, and `docx → pdf` uses reportlab), which
+keeps it small enough for a free tier.
+
+**Render (one-click-ish):**
+
+1. Push this repo to GitHub (already done if you're reading this there).
+2. On [dashboard.render.com](https://dashboard.render.com): **New + → Blueprint**,
+   pick this repo. It reads [`render.yaml`](render.yaml) and provisions a free
+   Docker web service. (Or **New + → Web Service → Docker** and point it at the repo.)
+3. Wait for the build, then open the `…onrender.com` URL — the converter UI
+   loads and works.
+
+**Run the container anywhere else:**
+
+```bash
+docker build -t converter .
+docker run -p 5050:5050 converter
+# open http://localhost:5050
+```
+
+Public-deployment behavior (all overridable by env var, see `render.yaml`):
+
+- **Localhost-safe AI fallback stays off**: `GEMINI_API_KEY` is left unset, so
+  the code-executing fallback is disabled.
+- **Per-IP rate limiting** via `flask-limiter` (`RATE_LIMITS`, default
+  `60 per hour;10 per minute`; empty string disables it).
+- **Upload cap** (`MAX_UPLOAD_MB`, default 25) and **auto-cleanup** of converted
+  files older than `OUTPUT_TTL_SECONDS` (default 3600) so the disk doesn't fill.
+
+Notes / further hardening:
+
+- Render's **free instance sleeps after ~15 min idle**; the first request after
+  that takes ~30s to wake. Upgrade the plan to keep it warm.
+- Converted files live on the container's ephemeral disk. For durability or
+  horizontal scaling, swap to S3-style object storage with expiry.
+- Conversion is **synchronous** inside the request. For large files or heavy
+  load, move it to a queue (Celery + Redis, or BullMQ).
+- **Full-fidelity Office conversion** (pptx, xlsx, pixel-perfect docx↔pdf)
+  would add LibreOffice (`soffice --headless --convert-to pdf`) to the image.
+- **Video/audio** could follow the same routing pattern with an `ffmpeg` engine.
 
 ## Files
 

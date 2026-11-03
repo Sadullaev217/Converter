@@ -1,0 +1,14 @@
+.git
+node_modules
+__pycache__
+*.pyc
+backend/__pycache__
+tests
+examples
+.github
+*.md
+!backend/requirements.txt
+test-output.docx
+*.docx
+.gitattributes
+.gitignore
