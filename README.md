@@ -241,25 +241,45 @@ independently.
 
 The whole app runs as **one Docker container** — Flask serves both the API
 and the static frontend (same origin), and shells out to the Node tool. The
-image bundles Python + Node + Poppler + **LibreOffice Writer** (for
-high-fidelity `docx → pdf`; Writer only, not full LibreOffice, to stay
-lean). LibreOffice is memory-heavy, so the blueprint sets `WEB_CONCURRENCY=1`
-— on Render's free 512 MB instance that avoids OOM; bump it on a bigger plan.
+default image bundles Python + Node + Poppler and is light enough for a free
+512 MB instance.
 
-**Render (one-click-ish):**
+**Two fidelity tiers (the memory tradeoff):**
+
+- **Lightweight (default)** — no LibreOffice. Runs reliably on a free tier.
+  `pdf → docx` uses the editable Node rebuild; `docx → pdf` uses a text
+  reflow. Images, PDF text/page extraction, and `txt → pdf` are unaffected.
+- **High-fidelity (opt-in)** — build with `--build-arg INSTALL_LIBREOFFICE=true`
+  to add LibreOffice, which makes `docx → pdf` pixel-faithful and `pdf → docx`
+  layout-accurate. LibreOffice needs **~300–500 MB RAM to run**, so this
+  needs an instance with **≥ 1 GB** (free/Starter are 512 MB and will OOM),
+  and `WEB_CONCURRENCY=1`.
+
+The app auto-detects whether LibreOffice is present and picks the engine (or
+falls back) accordingly — the same code runs in both tiers.
+
+**Render (free, lightweight):**
 
 1. Push this repo to GitHub (already done if you're reading this there).
 2. On [dashboard.render.com](https://dashboard.render.com): **New + → Blueprint**,
    pick this repo. It reads [`render.yaml`](render.yaml) and provisions a free
    Docker web service. (Or **New + → Web Service → Docker** and point it at the repo.)
-3. Wait for the build, then open the `…onrender.com` URL — the converter UI
-   loads and works.
+3. Wait for the build, then open the `…onrender.com` URL.
+
+**For the high-fidelity tier:** use a ≥ 1 GB instance (Render Standard, a
+Fly.io/Railway machine, or a small VPS), set the Docker build argument
+`INSTALL_LIBREOFFICE=true`, and `WEB_CONCURRENCY=1`.
 
 **Run the container anywhere else:**
 
 ```bash
+# lightweight
 docker build -t converter .
 docker run -p 5050:5050 converter
+
+# high-fidelity (needs >= 1GB RAM)
+docker build --build-arg INSTALL_LIBREOFFICE=true -t converter-hifi .
+docker run -p 5050:5050 -e WEB_CONCURRENCY=1 converter-hifi
 # open http://localhost:5050
 ```
 
