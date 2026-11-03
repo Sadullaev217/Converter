@@ -22,5 +22,9 @@ services:
       # Per-IP limits ("<n> per <period>" items separated by ";"); set empty to disable.
       - key: RATE_LIMITS
         value: "60 per hour;10 per minute"
+      # LibreOffice (docx->pdf) is memory-heavy; 1 worker is safest on a small
+      # instance. Raise it on a bigger plan for more concurrency.
+      - key: WEB_CONCURRENCY
+        value: "1"
       # NOTE: GEMINI_API_KEY is intentionally unset, so the AI fallback
       # (which executes generated code) stays disabled on the public instance.

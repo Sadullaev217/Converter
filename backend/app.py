@@ -26,6 +26,7 @@ import io
 import re
 import time
 import uuid
+import shutil
 import zipfile
 import subprocess
 from pathlib import Path
@@ -72,6 +73,43 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 OUTPUT_TTL_SECONDS = int(os.environ.get("OUTPUT_TTL_SECONDS", 3600))
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# LibreOffice (soffice) gives high-fidelity office->pdf conversion. Resolved
+# once; None means it's not installed and we fall back to a basic engine.
+_SOFFICE_FALLBACKS = [
+    r"C:\Program Files\LibreOffice\program\soffice.exe",
+    r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+]
+
+
+def find_soffice():
+    found = shutil.which("soffice") or shutil.which("soffice.exe")
+    if found:
+        return found
+    return next((p for p in _SOFFICE_FALLBACKS if os.path.exists(p)), None)
+
+
+SOFFICE = find_soffice()
+
+
+def soffice_convert(src_path: Path, out_path: Path, target_ext: str) -> None:
+    """Convert `src_path` to `target_ext` with headless LibreOffice, preserving
+    layout/fonts/images. Each call uses its own LibreOffice profile so
+    concurrent requests don't lock each other."""
+    if not SOFFICE:
+        raise RuntimeError("LibreOffice (soffice) is not installed")
+    with tempfile.TemporaryDirectory() as tmp:
+        profile = (Path(tmp) / "profile").as_uri()
+        result = subprocess.run(
+            [SOFFICE, f"-env:UserInstallation={profile}", "--headless",
+             "--convert-to", target_ext, "--outdir", tmp, str(src_path)],
+            capture_output=True, text=True, timeout=120,
+        )
+        produced = Path(tmp) / f"{src_path.stem}.{target_ext}"
+        if result.returncode != 0 or not produced.exists():
+            detail = (result.stderr or result.stdout or "unknown error").strip()
+            raise RuntimeError(f"LibreOffice conversion failed: {detail}")
+        shutil.move(str(produced), str(out_path))
 
 
 def cleanup_dir(directory: Path, ttl: int = OUTPUT_TTL_SECONDS) -> None:
@@ -270,7 +308,20 @@ def _docx_to_text(src_path: Path, job_id: str) -> Path:
 
 
 def _docx_to_pdf(src_path: Path, job_id: str) -> Path:
+    """High-fidelity docx -> pdf via LibreOffice (preserves layout, fonts,
+    images, tables). Falls back to a basic text reflow only when LibreOffice
+    isn't installed, so local dev still works without it."""
     out_path = OUTPUT_DIR / f"{job_id}.pdf"
+    if SOFFICE:
+        soffice_convert(src_path, out_path, "pdf")
+    else:
+        _docx_to_pdf_reflow(src_path, out_path)
+    return out_path
+
+
+def _docx_to_pdf_reflow(src_path: Path, out_path: Path) -> None:
+    """Fallback: dump the document's paragraph text into a PDF. No layout,
+    fonts or images - used only when LibreOffice is unavailable."""
     d = docx.Document(str(src_path))
     c = canvas.Canvas(str(out_path), pagesize=letter)
     width, height = letter
@@ -289,7 +340,6 @@ def _docx_to_pdf(src_path: Path, job_id: str) -> Path:
                 c.showPage()
                 y = height - inch
     c.save()
-    return out_path
 
 
 def _txt_to_pdf(src_path: Path, job_id: str) -> Path:

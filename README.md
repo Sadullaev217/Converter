@@ -163,11 +163,11 @@ python tests/fixtures/make_sample_pdf.py
 
 `backend/app.py` (Flask) + `frontend/index.html` (static, no build step) is
 a small "convert any format to any other format" shell around the routing
-table below. It's honestly a thinner prototype than the PDF→DOCX piece —
-images go through Pillow, PDF text/image extraction through PyMuPDF, and
-`docx → pdf` is a naive text reflow, not pixel-perfect layout. `pdf → docx`
-is the one route with real fidelity, because it calls out to the Node tool
-above.
+table below. Images go through Pillow, PDF text/image extraction through
+PyMuPDF, `docx → pdf` through **LibreOffice headless** (`soffice
+--convert-to`, which preserves layout/fonts/images/tables — it falls back to
+a plain text reflow only if LibreOffice isn't installed), and `pdf → docx`
+by shelling out to the structural-rebuild tool above.
 
 | From | To |
 |---|---|
@@ -176,7 +176,7 @@ above.
 | pdf | png (one image per page, zipped) |
 | **pdf** | **docx (structural rebuild — see above)** |
 | docx | txt |
-| docx | pdf (basic text reflow — not pixel-perfect layout) |
+| docx | pdf (high-fidelity via LibreOffice — layout, fonts, images, tables preserved) |
 | txt | pdf |
 
 All conversions run locally, no external API calls, no API keys needed
@@ -232,9 +232,10 @@ independently.
 
 The whole app runs as **one Docker container** — Flask serves both the API
 and the static frontend (same origin), and shells out to the Node tool. The
-image bundles Python + Node + Poppler; **LibreOffice is not needed** (the web
-`pdf → docx` route runs `--no-verify`, and `docx → pdf` uses reportlab), which
-keeps it small enough for a free tier.
+image bundles Python + Node + Poppler + **LibreOffice Writer** (for
+high-fidelity `docx → pdf`; Writer only, not full LibreOffice, to stay
+lean). LibreOffice is memory-heavy, so the blueprint sets `WEB_CONCURRENCY=1`
+— on Render's free 512 MB instance that avoids OOM; bump it on a bigger plan.
 
 **Render (one-click-ish):**
 
